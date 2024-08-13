@@ -5,16 +5,15 @@ import sklearn
 import keras, os
 import matplotlib.pyplot as plt
 import tensorflow as tf
-
 from datetime import datetime
-# For VGG16
-from keras.models import Sequential
-from keras.layers import Dense, Conv2D, MaxPool2D , Flatten
+# For VGG16 and GoogleNet
+from keras.models import Model, Sequential
+from keras.layers import Input, Dense, Conv2D, MaxPool2D , Flatten, MaxPooling2D, AveragePooling2D, GlobalAveragePooling2D, Dropout
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.src.legacy.preprocessing.image import ImageDataGenerator
 # For ResNet50V2
-from tensorflow.keras.layers import Activation, Dense, Flatten, BatchNormalization, Conv2D, MaxPool2D
+from tensorflow.keras.layers import Activation, Dense, Flatten, BatchNormalization, Conv2D, MaxPool2D, concatenate
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import categorical_crossentropy
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -34,6 +33,9 @@ class CNNTrainingProcessor(AbstractProcessor):
         self.networks, self.activations, self.lr = self.get_configs()
         self.gpu_count = torch.cuda.device_count()
         self.device_queue = list(range(self.gpu_count)) if self.gpu_count > 0 else ['cpu']
+        self.current_directory = os.path.dirname(os.path.abspath(__file__))
+        self.training_path = os.path.join(self.current_directory, '..', 'data', 'cropped_images', 'training')
+        self.validation_path = os.path.join(self.current_directory, '..', 'data', 'cropped_images', 'validation')
 
     def pre_process(self, input_data: dict) -> dict:
         """
@@ -100,20 +102,16 @@ class CNNTrainingProcessor(AbstractProcessor):
     def _process_vgg16(self, input_data: dict, device: str) -> dict:
         print("INFO: ", self.FILE_NAME, '_process_vgg16', f"Running VGG16 on {device}")
 
-        current_directory = os.path.dirname(os.path.abspath(__file__))
-        training_path = os.path.join(current_directory, '..', 'data', 'cropped_images', 'training')
-        validation_path = os.path.join(current_directory, '..', 'data', 'cropped_images', 'training')
-
         trdata = ImageDataGenerator()
         traindata = trdata.flow_from_directory(
-            directory=training_path,
+            directory=self.training_path,
             target_size=(224,224),
             batch_size=32,
             class_mode='categorical'
         )
         tsdata = ImageDataGenerator()
         testdata = tsdata.flow_from_directory(
-            directory=validation_path,
+            directory=self.validation_path,
             target_size=(224,224),
             batch_size=32,
             class_mode='categorical'
@@ -145,14 +143,37 @@ class CNNTrainingProcessor(AbstractProcessor):
         model.add(Dense(units=2, activation="softmax"))
 
         opt = Adam(learning_rate=0.001)
-        model.compile(optimizer=opt, loss=keras.losses.categorical_crossentropy, metrics=['accuracy'])
+        #model.compile(optimizer=opt, loss=keras.losses.categorical_crossentropy, metrics=['accuracy'])
+        model.compile(optimizer=opt, loss=tf.keras.losses.categorical_crossentropy, metrics=['accuracy'])
         model.summary()
 
-        checkpoint = ModelCheckpoint("vgg16_1.keras", monitor='val_acc', verbose=1, save_best_only=True, save_weights_only=False, mode='max', save_freq='epoch')
-        early = EarlyStopping(monitor='val_acc', min_delta=0, patience=20, verbose=1, mode='max')
-        hist = model.fit(steps_per_epoch=len(traindata), x=traindata, validation_data=testdata, validation_steps=len(testdata), epochs=1, callbacks=[checkpoint, early])
+        checkpoint = ModelCheckpoint(
+            "vgg16_1.keras", 
+            monitor='val_acc', 
+            verbose=1, 
+            save_best_only=True, 
+            save_weights_only=False, 
+            mode='max', 
+            save_freq='epoch'
+        )
+        early = EarlyStopping(
+            monitor='val_acc', 
+            min_delta=0, 
+            patience=20, 
+            verbose=1, 
+            mode='max'
+        )
 
-        results_directory = os.path.join(current_directory, '..', 'data', 'results', 'VGG16')
+        hist = model.fit(
+            steps_per_epoch=len(traindata), 
+            x=traindata, 
+            validation_data=testdata, 
+            validation_steps=len(testdata), 
+            epochs=1, 
+            callbacks=[checkpoint, early]
+        )
+
+        results_directory = os.path.join(self.current_directory, '..', 'data', 'results', 'VGG16')
         os.makedirs(results_directory, exist_ok=True)
         final_accuracy = hist.history['accuracy'][-1]
         now = datetime.now()
@@ -165,35 +186,30 @@ class CNNTrainingProcessor(AbstractProcessor):
         print(f"Modelo salvo em: {model_filepath}")
 
         input_data['VGG16_output'] = hist.history
+        input_data['VGG16_model'] = f"{final_accuracy:.2f}_{timestamp}"
 
         return input_data
 
     def _process_resnet50v2(self, input_data: dict, device: str) -> dict:
         print("INFO: ", self.FILE_NAME, '_process_resnet50v2',f"Running ResNet50V2 on {device}")
 
-        current_directory = os.path.dirname(os.path.abspath(__file__))
-        training_path = os.path.join(current_directory, '..', 'data', 'cropped_images', 'training')
-        validation_path = os.path.join(current_directory, '..', 'data', 'cropped_images', 'training')
-
         trdata = ImageDataGenerator()
         traindata = trdata.flow_from_directory(
-            directory=training_path,
+            directory=self.training_path,
             target_size=(256,256),
             batch_size=32,
             class_mode='categorical'
         )
         tsdata = ImageDataGenerator()
         testdata = tsdata.flow_from_directory(
-            directory=validation_path,
+            directory=self.validation_path,
             target_size=(256,256),
             batch_size=32,
             class_mode='categorical'
         )
 
         base_model = tf.keras.applications.ResNet50V2(input_shape=(256,256,3), include_top=False)
-
         base_model.trainable = True
-        base_model.summary()
 
         tuning_layer_name = 'conv5_block1_preact_bn'
         tuning_layer = base_model.get_layer(tuning_layer_name)
@@ -209,14 +225,41 @@ class CNNTrainingProcessor(AbstractProcessor):
         ], name='data_transforms')
 
         model = tf.keras.Sequential([
-            data_transforms, base_model, tf.keras.layers.GlobalAveragePooling2D(), tf.keras.layers.Dense(2, activation='softmax')
+            data_transforms, 
+            base_model, 
+            tf.keras.layers.GlobalAveragePooling2D(), 
+            tf.keras.layers.Dense(2, activation='softmax')
         ])
+
         learning_rate = 0.001
         model.compile(loss='categorical_crossentropy', optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), metrics=['accuracy'])
 
-        hist = model.fit(traindata, validation_data=testdata, epochs=1)
+        checkpoint = tf.keras.callbacks.ModelCheckpoint(
+            "resnet50v2_best_model.keras", 
+            monitor='val_accuracy', 
+            verbose=1, 
+            save_best_only=True, 
+            save_weights_only=False, 
+            mode='max', 
+            save_freq='epoch'
+        )
 
-        results_directory = os.path.join(current_directory, '..', 'data', 'results', 'ResNet50v2')
+        early = tf.keras.callbacks.EarlyStopping(
+            monitor='val_accuracy', 
+            min_delta=0, 
+            patience=20, 
+            verbose=1, 
+            mode='max'
+        )
+
+        hist = model.fit(
+            traindata, 
+            validation_data=testdata, 
+            epochs=1, 
+            callbacks=[checkpoint, early]
+        )
+
+        results_directory = os.path.join(self.current_directory, '..', 'data', 'results', 'ResNet50v2')
         os.makedirs(results_directory, exist_ok=True)
         final_accuracy = hist.history['accuracy'][-1]
         now = datetime.now()
@@ -229,12 +272,164 @@ class CNNTrainingProcessor(AbstractProcessor):
         print(f"Modelo salvo em: {model_filepath}")
 
         input_data['ResNet50V2_output'] = hist.history
+        input_data['ResNet50V2_model'] = f"{final_accuracy:.2f}_{timestamp}"
+
         return input_data
 
     def _process_googlenet(self, input_data: dict, device: str) -> dict:
         print("INFO: ", self.FILE_NAME, '_process_googlenet',f"Running GoogleNet on {device}")
-        input_data['GoogleNet_output'] = f'processed_data_googlenet_on_{device}'
+
+        trdata = ImageDataGenerator()
+        traindata = trdata.flow_from_directory(
+            directory=self.training_path,
+            target_size=(224,224),
+            batch_size=32,
+            class_mode='categorical'
+        )
+        tsdata = ImageDataGenerator()
+        testdata = tsdata.flow_from_directory(
+            directory=self.validation_path,
+            target_size=(224,224),
+            batch_size=32,
+            class_mode='categorical'
+        )
+
+        input_layer = Input(shape = (224, 224, 3))
+
+        X = Conv2D(filters = 64, kernel_size = (7,7), strides = 2, padding = 'valid', activation = 'relu')(input_layer)
+        X = MaxPooling2D(pool_size = (3,3), strides = 2)(X)
+        X = Conv2D(filters = 64, kernel_size = (1,1), strides = 1, padding = 'same', activation = 'relu')(X)
+        X = Conv2D(filters = 192, kernel_size = (3,3), padding = 'same', activation = 'relu')(X)
+        X = MaxPooling2D(pool_size= (3,3), strides = 2)(X)
+        X = self.inception_block(X, f1 = 64, f2_conv1 = 96, f2_conv3 = 128, f3_conv1 = 16, f3_conv5 = 32, f4 = 32)
+        X = self.inception_block(X, f1 = 128, f2_conv1 = 128, f2_conv3 = 192, f3_conv1 = 32, f3_conv5 = 96, f4 = 64)
+        X = MaxPooling2D(pool_size= (3,3), strides = 2)(X)
+        X = self.inception_block(X, f1 = 192, f2_conv1 = 96, f2_conv3 = 208, f3_conv1 = 16, f3_conv5 = 48, f4 = 64)
+
+        # Extra network 1:
+        X1 = AveragePooling2D(pool_size = (5,5), strides = 3)(X)
+        X1 = Conv2D(filters = 128, kernel_size = (1,1), padding = 'same', activation = 'relu')(X1)
+        X1 = Flatten()(X1)
+        X1 = Dense(1024, activation = 'relu')(X1)
+        X1 = Dropout(0.7)(X1)
+        X1 = Dense(5, activation = 'softmax')(X1)
+
+        X = self.inception_block(X, f1 = 160, f2_conv1 = 112, f2_conv3 = 224, f3_conv1 = 24, f3_conv5 = 64, f4 = 64)
+        X = self.inception_block(X, f1 = 128, f2_conv1 = 128, f2_conv3 = 256, f3_conv1 = 24, f3_conv5 = 64, f4 = 64)
+        X = self.inception_block(X, f1 = 112, f2_conv1 = 144, f2_conv3 = 288, f3_conv1 = 32, f3_conv5 = 64, f4 = 64)
+
+        # Extra network 2:
+        X2 = AveragePooling2D(pool_size = (5,5), strides = 3)(X)
+        X2 = Conv2D(filters = 128, kernel_size = (1,1), padding = 'same', activation = 'relu')(X2)
+        X2 = Flatten()(X2)
+        X2 = Dense(1024, activation = 'relu')(X2)
+        X2 = Dropout(0.7)(X2)
+
+        X2 = Dense(1000, activation = 'softmax')(X2)
+        
+        X = self.inception_block(X, f1 = 256, f2_conv1 = 160, f2_conv3 = 320, f3_conv1 = 32, f3_conv5 = 128, f4 = 128)
+        X = MaxPooling2D(pool_size = (3,3), strides = 2)(X)
+        X = self.inception_block(X, f1 = 256, f2_conv1 = 160, f2_conv3 = 320, f3_conv1 = 32, f3_conv5 = 128, f4 = 128)
+        X = self.inception_block(X, f1 = 384, f2_conv1 = 192, f2_conv3 = 384, f3_conv1 = 48, f3_conv5 = 128, f4 = 128)
+        X = GlobalAveragePooling2D(name = 'GAPL')(X)
+        X = Dropout(0.4)(X)
+
+        num_classes = 2 # Importante mudar
+        X = Dense(num_classes, activation = 'softmax')(X)
+
+        model = Model(input_layer, [X, X1, X2], name = 'GoogLeNet')
+
+        learning_rate = 0.001
+
+        model.compile(
+            loss='categorical_crossentropy', 
+            optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
+            metrics=['accuracy'] * len(model.output_names)
+        )
+
+        # callback para salvar o melhor modelo
+        checkpoint = tf.keras.callbacks.ModelCheckpoint(
+            "googlenet_best_model.keras",  # Nome do arquivo do modelo salvo
+            monitor='val_accuracy',        # Monitorar a métrica de acurácia na validação
+            verbose=1,                     # Mostrar mensagens de salvamento
+            save_best_only=True,           # Salvar apenas o melhor modelo
+            save_weights_only=False,       # Salvar o modelo completo, não apenas os pesos
+            mode='max',                    # Salvar quando a métrica monitorada estiver no máximo
+            save_freq='epoch'              # Salvar ao final de cada epoch
+        )
+
+        # callback de parada antecipada
+        early = tf.keras.callbacks.EarlyStopping(
+            monitor='val_accuracy',  # Monitorar a métrica de acurácia na validação
+            min_delta=0,             # Mínima mudança na métrica para considerar uma melhoria
+            patience=20,             # Número de epochs para esperar antes de parar se não houver melhoria
+            verbose=1,               # Mostrar mensagens de parada antecipada
+            mode='max'               # Parar quando a métrica monitorada estiver no máximo
+        )
+
+        hist = model.fit(
+            traindata,
+            validation_data=testdata,
+            epochs=1,
+            callbacks=[checkpoint, early]  
+        )
+
+        results_directory = os.path.join(self.current_directory, '..', 'data', 'results', 'GoogLeNet')
+        os.makedirs(results_directory, exist_ok=True)
+        final_accuracy = hist.history['dense_4_accuracy'][-1]
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M")
+
+        model_filename = f"{final_accuracy:.2f}_{timestamp}.h5"
+        model_filepath = os.path.join(results_directory, model_filename)
+        
+        model.save(model_filepath)
+        print(f"Modelo salvo em: {model_filepath}")
+        
+        input_data['GoogLeNet_output'] = hist.history
+        input_data['GoogLeNet_model'] = f"{final_accuracy:.2f}_{timestamp}"
+        
         return input_data
+    
+    def inception_block(self, input_layer, f1, f2_conv1, f2_conv3, f3_conv1, f3_conv5, f4): 
+        """
+        Creates a custom Inception block for a convolutional neural network.
+
+        Parameters:
+        -----------
+        input_layer : tf.Tensor
+            The input layer for the Inception block. Typically, the output from a previous convolutional layer.
+        f1 : int -> Number of filters for the 1x1 convolutional layer in the first path.
+        f2_conv1 : int -> Number of filters for the first 1x1 convolutional layer in the second path.
+        f2_conv3 : int ->  Number of filters for the 3x3 convolutional layer in the second path.
+        f3_conv1 : int -> Number of filters for the first 1x1 convolutional layer in the third path.
+        f3_conv5 : int -> Number of filters for the 5x5 convolutional layer in the third path.
+        f4 : int -> Number of filters for the 1x1 convolutional layer in the fourth path, after the MaxPooling operation.
+        Returns:
+        --------
+        output_layer : tf.Tensor -> The output layer resulting from the concatenation of the four paths in the Inception block.
+
+        Description:
+        ------------
+        The Inception block is a complex module that applies multiple convolutions and pooling operations in parallel
+        and concatenates their outputs to form the block's output. This block is widely used in architectures like
+        GoogleNet (Inception-v1) to extract features at different scales simultaneously.
+        """
+
+        path1 = Conv2D(filters=f1, kernel_size = (1,1), padding = 'same', activation = 'relu')(input_layer)
+
+        path2 = Conv2D(filters = f2_conv1, kernel_size = (1,1), padding = 'same', activation = 'relu')(input_layer)
+        path2 = Conv2D(filters = f2_conv3, kernel_size = (3,3), padding = 'same', activation = 'relu')(path2)
+
+        path3 = Conv2D(filters = f3_conv1, kernel_size = (1,1), padding = 'same', activation = 'relu')(input_layer)
+        path3 = Conv2D(filters = f3_conv5, kernel_size = (5,5), padding = 'same', activation = 'relu')(path3)
+
+        path4 = MaxPooling2D((3,3), strides= (1,1), padding = 'same')(input_layer)
+        path4 = Conv2D(filters = f4, kernel_size = (1,1), padding = 'same', activation = 'relu')(path4)
+
+        output_layer = concatenate([path1, path2, path3, path4], axis = -1)
+
+        return output_layer
    
     def get_configs(self) -> tuple:
         """

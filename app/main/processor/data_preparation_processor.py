@@ -40,7 +40,20 @@ class DataPreparationProcessor(AbstractProcessor):
         training_dir = Path(input_data["cropped_images_directory"])
         validation_dir = training_dir.parent.parent / "validation" / training_dir.name
 
-        # List all image files in the training directory
+        if validation_dir.exists() and validation_dir.is_dir():
+            file_patterns = ["*.jpeg", "*.jpg", "*.png"]
+            files_to_delete = []
+            for pattern in file_patterns:
+                files_to_delete.extend(validation_dir.glob(pattern))
+            for file in files_to_delete:
+                if file.is_file():
+                    try:
+                        file.unlink()
+                    except Exception as e:
+                        print("ERROR: ", self.FILE_NAME, 'process', f"Error deleting {file}: {e}")
+        else:
+            print("ERROR: ", self.FILE_NAME, 'process', f"Validation directory {validation_dir} does not exist or is not a directory.")
+
         image_files = list(training_dir.glob("*.*"))
         num_images = len(image_files)
 
