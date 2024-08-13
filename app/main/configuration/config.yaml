@@ -1,0 +1,27 @@
+processors:
+  CropProcessor:
+    save_mode: True
+  
+  # SuperResolutionProcessor:
+  #   tooth: true
+  #
+  # EnhancementProcessor:
+  #   methods: ['gray_scale', 'binarization', 'pad_image_to_max_dimensions']
+  #   # all_disponible_methods: ['msthgr', 'gray_scale', 'binarization', 'sauvola_threshold', 'otsu_threshold', 
+  #   # 'pad_image_to_max_dimensions', 'pad_image_to_average_dimensions']
+
+  DataPreparationProcessor:
+    training: 80
+    validation: 20
+    total_images: 250
+    cross_validation: False # TODO
+  
+  # This processor works as the last processor, each class will be processed, 
+  # after all that a multi-class training and evaluation metrics will be processed at the end.
+  CNNTrainingProcessor: 
+    networks: ['ResNet50V2', 'GoogleNet']
+    activations: ["relu"] # "relu", "softmax", ""
+    lr: 0.001
+  
+  # EvaluationMetricsProcessor:
+  #   tooth: true
