@@ -1,5 +1,6 @@
 *.keras
 *.h5
+*.java
 app/__pycache__/
 app/main/__pycache__/
 app/main/util/__pycache__/

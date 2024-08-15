@@ -30,7 +30,7 @@ class CNNTrainingProcessor(AbstractProcessor):
 
     def __init__(self, conf):
         super(CNNTrainingProcessor, self).__init__(conf)
-        self.networks, self.activations, self.lr = self.get_configs()
+        self.networks, self.activations, self.lr, self.epochs = self.get_configs()
         self.gpu_count = torch.cuda.device_count()
         self.device_queue = list(range(self.gpu_count)) if self.gpu_count > 0 else ['cpu']
         self.current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -142,14 +142,14 @@ class CNNTrainingProcessor(AbstractProcessor):
         model.add(Dense(units=4096,activation="relu"))
         model.add(Dense(units=2, activation="softmax"))
 
-        opt = Adam(learning_rate=0.001)
+        opt = Adam(learning_rate=self.lr)
         #model.compile(optimizer=opt, loss=keras.losses.categorical_crossentropy, metrics=['accuracy'])
         model.compile(optimizer=opt, loss=tf.keras.losses.categorical_crossentropy, metrics=['accuracy'])
         model.summary()
 
         checkpoint = ModelCheckpoint(
             "vgg16_1.keras", 
-            monitor='val_acc', 
+            monitor='val_accuracy', 
             verbose=1, 
             save_best_only=True, 
             save_weights_only=False, 
@@ -157,19 +157,32 @@ class CNNTrainingProcessor(AbstractProcessor):
             save_freq='epoch'
         )
         early = EarlyStopping(
-            monitor='val_acc', 
+            monitor='val_accuracy', 
             min_delta=0, 
             patience=20, 
             verbose=1, 
             mode='max'
         )
 
+        # steps_per_epoch = traindata.samples // traindata.batch_size
+        # validation_steps = testdata.samples // testdata.batch_size
+        # if steps_per_epoch == 0:
+        #     steps_per_epoch = 1
+        # if validation_steps == 0:
+        #     validation_steps = 1
+        # hist = model.fit(
+        #    steps_per_epoch=steps_per_epoch, 
+        #    x=traindata, 
+        #    validation_data=testdata, 
+        #    validation_steps=validation_steps, 
+        #    epochs=self.epochs, 
+        #    callbacks=[checkpoint, early]
+        #)
+
         hist = model.fit(
-            steps_per_epoch=len(traindata), 
-            x=traindata, 
+            traindata, 
             validation_data=testdata, 
-            validation_steps=len(testdata), 
-            epochs=1, 
+            epochs=self.epochs, 
             callbacks=[checkpoint, early]
         )
 
@@ -231,7 +244,7 @@ class CNNTrainingProcessor(AbstractProcessor):
             tf.keras.layers.Dense(2, activation='softmax')
         ])
 
-        learning_rate = 0.001
+        learning_rate = self.lr
         model.compile(loss='categorical_crossentropy', optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), metrics=['accuracy'])
 
         checkpoint = tf.keras.callbacks.ModelCheckpoint(
@@ -255,7 +268,7 @@ class CNNTrainingProcessor(AbstractProcessor):
         hist = model.fit(
             traindata, 
             validation_data=testdata, 
-            epochs=1, 
+            epochs=self.epochs, 
             callbacks=[checkpoint, early]
         )
 
@@ -339,7 +352,7 @@ class CNNTrainingProcessor(AbstractProcessor):
 
         model = Model(input_layer, [X, X1, X2], name = 'GoogLeNet')
 
-        learning_rate = 0.001
+        learning_rate = self.lr
 
         model.compile(
             loss='categorical_crossentropy', 
@@ -370,13 +383,14 @@ class CNNTrainingProcessor(AbstractProcessor):
         hist = model.fit(
             traindata,
             validation_data=testdata,
-            epochs=1,
+            epochs=self.epochs,
             callbacks=[checkpoint, early]  
         )
 
         results_directory = os.path.join(self.current_directory, '..', 'data', 'results', 'GoogLeNet')
         os.makedirs(results_directory, exist_ok=True)
-        final_accuracy = hist.history['dense_4_accuracy'][-1]
+        final_accuracy_key = 'dense_4_accuracy' if 'dense_4_accuracy' in hist.history else 'dense_8_accuracy'
+        final_accuracy = float(hist.history[final_accuracy_key][-1])
         now = datetime.now()
         timestamp = now.strftime("%Y%m%d_%H%M")
 
@@ -442,13 +456,15 @@ class CNNTrainingProcessor(AbstractProcessor):
         if all(key in self.conf for key in ["networks", "activations", "lr"]):
             networks = self.conf["networks"]
             activations = self.conf["activations"]
-            lr = self.conf["lr"]
+            lr = float(self.conf["lr"])
+            epochs = int(self.conf["epochs"])
         else:
             networks = ['VGG16', 'ResNet50V2', 'GoogleNet']
             activations = ["relu"]
             lr = 0.001
+            epochs = 5
             print("ERROR: ", self.FILE_NAME, 'get_configs', 'The processor CNNTrainingProcessor needs configuration, using default configs.',
                                 self.INTERNAL_SERVER_ERROR)
 
-        return networks, activations, lr
+        return networks, activations, lr, epochs
     

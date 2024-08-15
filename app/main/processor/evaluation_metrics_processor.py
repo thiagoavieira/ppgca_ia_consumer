@@ -2,6 +2,7 @@ import os
 import json
 import random
 import shutil
+import matplotlib.pyplot as plt
 from pathlib import Path
 from ..processor.abstract_processor import AbstractProcessor
 
@@ -15,8 +16,6 @@ class EvaluationMetricsProcessor(AbstractProcessor):
 
     def __init__(self, conf):
         super(EvaluationMetricsProcessor, self).__init__(conf)
-        self.training, self.validation, self.total_images, self.cross_validation = self.get_configs()
-        self._validate_config()
 
     def pre_process(self, input_data: dict) -> dict:
         """
@@ -37,75 +36,48 @@ class EvaluationMetricsProcessor(AbstractProcessor):
         :param input_data: Dictionary containing the path to cropped images directory
         :return: Updated input_data dictionary
         """
-        training_dir = Path(input_data["cropped_images_directory"])
-        validation_dir = training_dir.parent.parent / "validation" / training_dir.name
 
-        # List all image files in the training directory
-        image_files = list(training_dir.glob("*.*"))
-        num_images = len(image_files)
+        current_directory = Path(__file__).resolve().parent
+        results_directory = current_directory.parent / "data" / "results"
+        
+        for key, value in input_data.items():
+            if '_output' in key:
+                model_name = key.replace('_output', '')
+                model_results = value
+                model_dir_name = input_data.get(f'{model_name}_model', 'default_model_name')
+                
+                # Criar o diretório para salvar os gráficos
+                model_dir = results_directory / model_name / model_dir_name
+                os.makedirs(model_dir, exist_ok=True)
+                
+                # Identificar as chaves específicas para GoogLeNet
+                acc_key = next((k for k in model_results if 'accuracy' in k and 'val' not in k), 'accuracy')
+                val_acc_key = next((k for k in model_results if 'val' in k and 'accuracy' in k), 'val_accuracy')
+                loss_key = 'loss'
+                val_loss_key = 'val_loss'
+                
+                # Plotar a acurácia
+                plt.figure()
+                plt.plot(model_results[acc_key], label='Training Accuracy')
+                plt.plot(model_results[val_acc_key], label='Validation Accuracy')
+                plt.title(f'{model_name} Accuracy')
+                plt.xlabel('Epochs')
+                plt.ylabel('Accuracy')
+                plt.legend()
+                plt.savefig(model_dir / f'{model_name}_accuracy_plot.png')
+                plt.close()
 
-        # Check if the number of images exceeds the total_images
-        if num_images > self.total_images:
-            print(f"INFO: {self.FILE_NAME} process: Exceeding total_images, reducing from {num_images} to {self.total_images}")
-            # Randomly delete extra images
-            images_to_delete = random.sample(image_files, num_images - self.total_images)
-            for image in images_to_delete:
-                os.remove(image)
-            image_files = list(training_dir.glob("*.*"))  # Update the list after deletion
-            num_images = len(image_files)
+                # Plotar a perda
+                plt.figure()
+                plt.plot(model_results[loss_key], label='Training Loss')
+                plt.plot(model_results[val_loss_key], label='Validation Loss')
+                plt.title(f'{model_name} Loss')
+                plt.xlabel('Epochs')
+                plt.ylabel('Loss')
+                plt.legend()
+                plt.savefig(model_dir / f'{model_name}_loss_plot.png')
+                plt.close()
 
-        # Calculate number of training and validation images
-        num_training = int(num_images * (self.training / 100))
-        num_validation = num_images - num_training
-
-        # Randomly shuffle the images
-        random.shuffle(image_files)
-
-        # Split images into training and validation sets
-        training_images = image_files[:num_training]
-        validation_images = image_files[num_training:num_training + num_validation]
-
-        # Ensure the validation directory exists and move validation images to the validation directory
-        validation_dir.mkdir(parents=True, exist_ok=True)
-        for image in validation_images:
-            shutil.move(str(image), validation_dir / image.name)
-        input_data["training_images_directory"] = str(training_dir)
-        input_data["validation_images_directory"] = str(validation_dir)
+                print(f'Plots saved in {model_dir}')
         
         return input_data
-    
-   
-    def get_configs(self) -> tuple:
-        """
-        Get configuration from yaml.
-        :return:
-        """
-        
-        print("DEBUG: ", self.FILE_NAME, 'get_configs', 'Getting config from yaml.')
-            
-        if all(key in self.conf for key in ["training", "validation", "total_images", "cross_validation"]):
-            training = self.conf["training"]
-            validation = self.conf["validation"]
-            total_images = self.conf["total_images"]
-            cross_validation = self.conf["cross_validation"]
-        else:
-            training = 80
-            validation = 20
-            total_images = 250
-            cross_validation = False
-            print("ERROR: ", self.FILE_NAME, 'get_configs', 'The processor CropProcessor needs configuration, using default configs.',
-                                self.INTERNAL_SERVER_ERROR)
-
-        return training, validation, total_images, cross_validation
-    
-    def _validate_config(self):
-        """
-        Validate training and validation percentages.
-        """
-        if not (0 <= self.training <= 100):
-            raise ValueError(f"Training percentage {self.training} must be between 0 and 100.")
-        if not (0 <= self.validation <= 100):
-            raise ValueError(f"Validation percentage {self.validation} must be between 0 and 100.")
-        if self.training + self.validation != 100:
-            raise ValueError(f"Training ({self.training}%) and validation ({self.validation}%) percentages must add up to 100.")
-
