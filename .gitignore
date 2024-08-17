@@ -2,6 +2,7 @@
 *.h5
 *.java
 app/__pycache__/
+app/java/
 app/main/__pycache__/
 app/main/util/__pycache__/
 app/main/service/__pycache__/

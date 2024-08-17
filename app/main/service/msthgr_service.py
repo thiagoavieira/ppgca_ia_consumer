@@ -1,7 +1,10 @@
-from PIL import Image
 import numpy as np
-from PIL import Image, ImageOps
-from scipy.ndimage import binary_erosion, binary_dilation, grey_dilation, grey_erosion
+from PIL import Image
+from skimage.morphology import white_tophat, black_tophat, disk, reconstruction, erosion, dilation
+from skimage import img_as_float
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 class MSTHGRService:
     """
@@ -13,109 +16,132 @@ class MSTHGRService:
         """
         Initialize the MSTHGRService.
         """
-        self.var = "oi"
+        print("öi")
 
-    def apply_msthgr(self, image_array: np.ndarray, rad=1, iter=7) -> np.ndarray:
+    def apply_msthgr(self, image: Image.Image, rad=1, iter=9) -> np.ndarray:
         """
         Apply MSTHGR enhancement to the image.
-        :param image_array: The image to be processed as a numpy array.
+        :param image: The image to be processed as a numpy array.
         :param rad: The initial radius for the structuring element.
         :param iter: The number of iterations to apply.
-        :return: The enhanced image as a numpy array.
+        :return: The enhanced image in PIL format.
         """
-        print("DEBUG: apply_msthgr", "Applying MSTHGR enhancement.")
+        print("DEBUG:", self.FILE_NAME, 'apply_msthgr', 'Applying MSTHGR enhancement')
+
+        # Converter para um array NumPy
+        ip_arr = np.array(image)
+
+        if ip_arr.ndim == 3 and ip_arr.shape[2] == 3:
+            # Converter a imagem RGB para escala de cinza usando a média dos canais
+            gray_array = np.mean(ip_arr, axis=2).astype(np.uint8)
+        else:
+            print("ERROR:", self.FILE_NAME, 'apply_msthgr', 'A entrada deve ser uma imagem RGB com 3 canais')
+            return(image)
         
-        M, N = image_array.shape
+        ip_arr = img_as_float(gray_array)  
+
         r = rad
-        
-        # Convert the image to an 8-bit image if not already
-        image_array = (image_array / np.max(image_array) * 255).astype(np.uint8)
-        
-        def white_top_hat(image, strel):
-            return image - binary_erosion(image, structure=strel, mode='constant', cval=0)
-        
-        def black_top_hat(image, strel):
-            return binary_dilation(image, structure=strel, mode='constant', cval=0) - image
-        
-        def create_strel(radius):
-            return np.fromfunction(lambda x, y: (x - radius) ** 2 + (y - radius) ** 2 <= radius ** 2, (2 * radius + 1, 2 * radius + 1), dtype=int)
-        
-        def reconstruct_by_dilation(erosion_image, original_image, iterations):
-            reconstruction = erosion_image.copy()
-            for _ in range(iterations):
-                reconstruction = binary_dilation(reconstruction, structure=create_strel(r))
-            return np.minimum(reconstruction, original_image)
-        
-        def reconstruct_by_erosion(dilation_image, original_image, iterations):
-            reconstruction = dilation_image.copy()
-            for _ in range(iterations):
-                reconstruction = binary_erosion(reconstruction, structure=create_strel(r))
-            return np.maximum(reconstruction, original_image)
-        
-        def subtract_images(image1, image2):
-            return np.clip(image1 - image2, 0, 255)
-        
-        def max_value_matrix(image1, image2):
-            return np.maximum(image1, image2)
-        
-        # Initialize variables
-        H = create_strel(r)
-        wth = white_top_hat(image_array, H)
-        bth = black_top_hat(image_array, H)
-        e_erosion = binary_erosion(image_array, structure=H, mode='constant', cval=0)
-        a_reconst = reconstruct_by_dilation(e_erosion, image_array, 8)
-        RWTH = subtract_images(image_array, a_reconst)
-        d_dilation = binary_dilation(image_array, structure=H, mode='constant', cval=0)
-        c_reconst = reconstruct_by_erosion(d_dilation, image_array, 8)
-        RBTH = subtract_images(c_reconst, image_array)
-        
-        RWTH = reconstruct_by_dilation(RWTH, wth, 8)
-        RBTH = reconstruct_by_dilation(RBTH, bth, 8)
-        
-        matriz_wth = [RWTH]
-        matriz_bth = [RBTH]
-        matriz_drwth = []
-        matriz_drbtn = []
-        
-        d_RWTH = np.zeros((M, N), dtype=np.uint8)
-        d_RBTH = np.zeros((M, N), dtype=np.uint8)
-        
+        H = disk(r)
+
+        r = rad
+        H = disk(r)  # Elemento estruturante
+
+        matrizWTH = []
+        matrizBTH = []
+        matrizDRWTH = []
+        matrizDRBTH = []
+
+        # Operações morfológicas
+        wth = white_tophat(ip_arr, footprint=H)
+        bth = black_tophat(ip_arr, footprint=H)
+        eRosion = erosion(ip_arr, footprint=H)
+        aReconst = reconstruction(eRosion, ip_arr, method='dilation')
+
+        RWTH = self.subtract(ip_arr, aReconst)
+        dIlation = dilation(ip_arr, footprint=H)
+        cReconst = reconstruction(dIlation, ip_arr, method='erosion')
+        RBTH = self.subtract(cReconst, ip_arr)
+
+        RWTH = reconstruction(RWTH, wth, method='dilation')
+        RBTH = reconstruction(RBTH, bth, method='dilation')
+
+        matrizWTH.append(RWTH)
+        matrizBTH.append(RBTH)
+
+        # Iterações adicionais
         if iter > 1:
             for k in range(1, iter):
                 r += 1
-                H = create_strel(r)
-                wth = white_top_hat(image_array, H)
-                bth = black_top_hat(image_array, H)
-                e_erosion = binary_erosion(image_array, structure=H, mode='constant', cval=0)
-                a_reconst = reconstruct_by_dilation(e_erosion, image_array, 8)
-                RWTH = subtract_images(image_array, a_reconst)
-                d_dilation = binary_dilation(image_array, structure=H, mode='constant', cval=0)
-                c_reconst = reconstruct_by_erosion(d_dilation, image_array, 8)
-                RBTH = subtract_images(c_reconst, image_array)
-                RWTH = reconstruct_by_dilation(RWTH, wth, 8)
-                RBTH = reconstruct_by_dilation(RBTH, bth, 8)
-                matriz_wth.append(RWTH)
-                matriz_bth.append(RBTH)
-                d_RWTH = subtract_images(matriz_wth[k], matriz_wth[k-1])
-                matriz_drwth.append(d_RWTH)
-                d_RBTH = subtract_images(matriz_bth[k], matriz_bth[k-1])
-                matriz_drbtn.append(d_RBTH)
-        
-        # Calculate the maxima
-        m_WTH = matriz_wth[0]
-        m_DRWTH = matriz_drwth[0]
-        m_BTH = matriz_bth[0]
-        m_DRBTH = matriz_drbtn[0]
-        
+                H = disk(r)
+                wth = white_tophat(ip_arr, footprint=H)
+                bth = black_tophat(ip_arr, footprint=H)
+                eRosion = erosion(ip_arr, footprint=H)
+                aReconst = reconstruction(eRosion, ip_arr, method='dilation')
+                RWTH = self.subtract(ip_arr, aReconst)
+                dIlation = dilation(ip_arr, footprint=H)
+                cReconst = reconstruction(dIlation, ip_arr, method='erosion')
+                RBTH = self.subtract(cReconst, ip_arr)
+
+                RWTH = reconstruction(RWTH, wth, method='dilation')
+                RBTH = reconstruction(RBTH, bth, method='dilation')
+
+                matrizWTH.append(RWTH)
+                matrizBTH.append(RBTH)
+
+                # Diferença entre iterações
+                dRWTH = self.subtract(matrizWTH[k], matrizWTH[k-1])
+                matrizDRWTH.append(dRWTH)
+                dRBTH = self.subtract(matrizBTH[k], matrizBTH[k-1])
+                matrizDRBTH.append(dRBTH)
+
+        m_WTH = matrizWTH[0]
+        m_DRWTH = matrizDRWTH[0]
+        m_BTH = matrizBTH[0]
+        m_DRBTH = matrizDRBTH[0]
+
         for w in range(1, iter):
-            m_WTH = max_value_matrix(matriz_wth[w], m_WTH)
-            m_BTH = max_value_matrix(matriz_bth[w], m_BTH)
+            m_WTH = self.max_value_matriz(matrizWTH[w], m_WTH)
+            m_BTH = self.max_value_matriz(matrizBTH[w], m_BTH)
+
         for w in range(1, iter - 1):
-            m_DRWTH = max_value_matrix(matriz_drwth[w], m_DRWTH)
-            m_DRBTH = max_value_matrix(matriz_drbtn[w], m_DRBTH)
-        
-        # Final enhancement
-        enhancement = (image_array + m_WTH + m_DRWTH + m_BTH + m_DRBTH)
-        enhancement = np.clip(enhancement, 0, 255).astype(np.uint8)
-        
-        return enhancement
+            m_DRWTH = self.max_value_matriz(matrizDRWTH[w], m_DRWTH)
+            m_DRBTH = self.max_value_matriz(matrizDRBTH[w], m_DRBTH)
+
+        IE = self.enhancement(ip_arr, m_WTH, m_DRWTH, m_BTH, m_DRBTH)
+
+        ip2 = np.clip(IE, 0, 255)
+
+        np_array_normalized = np.clip(ip2, 0, 1) * 255
+
+        # Convert iamge to 8-bits
+        np_array_8bit = np_array_normalized.astype(np.uint8)
+
+        # Convert image back to PIL
+        im_pil_8bit = Image.fromarray(np_array_8bit)
+
+        return im_pil_8bit
+    
+    def subtract(self, f1, f2):
+        res = f1 - f2
+        res[res < 0] = 0
+
+        return res
+
+    def max_value_matriz(self, f1, f2):
+        """
+        Returns an array where each value is the maximum of the corresponding values ​​of f1 and f2.
+        """
+
+        return np.maximum(f1, f2)
+
+    def enhancement(self, f1, f2, f3, f4, f5):
+        """
+        Performs the improvement calculation based on the addition and subtraction of the provided matrices.
+        """
+        # Calcula a melhoria
+        result = f1 + f2 + f3 - f4 - f5
+        # Garantir que os valores fiquem dentro da faixa [0, 255]
+        result = np.clip(result, 0, 255)
+
+        return result
+    

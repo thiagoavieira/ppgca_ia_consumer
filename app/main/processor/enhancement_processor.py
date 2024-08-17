@@ -1,9 +1,10 @@
 import json
 import os
-import cv2
-import numpy as np
-from PIL import Image, ImageOps
-from skimage import filters, img_as_ubyte
+import cv2 # type: ignore
+import numpy as np # type: ignore
+from PIL import Image, ImageOps # type: ignore
+from skimage import filters, img_as_ubyte # type: ignore
+import concurrent.futures
 from ..processor.abstract_processor import AbstractProcessor
 from ..service.msthgr_service import MSTHGRService
 
@@ -37,16 +38,48 @@ class EnhancementProcessor(AbstractProcessor):
         :param input_data:
         :return:
         """
+        use_threads = True
         print("DEBUG: Starting processing with methods:", self.methods)
         
-        for method in self.methods:
-            method_func = getattr(self, method.lower(), None)
-            if method_func:
-                print(f"DEBUG: Applying method: {method}")
-                input_data = method_func(input_data)
-            else:
-                print(f"ERROR: Method {method} is not implemented.")
+        cropped_images_directory = input_data.get("cropped_images_directory", "")
         
+        if not cropped_images_directory:
+            print("ERROR: No cropped_images_directory specified in input_data.")
+            return input_data
+
+        # Listar todas as imagens no diretório
+        image_files = [f for f in os.listdir(cropped_images_directory) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        
+        def process_image(image_file, input_data):
+            image_path = os.path.join(cropped_images_directory, image_file)
+            image = Image.open(image_path)
+            
+            # Aplicar cada método na imagem
+            for method in self.methods:
+                method_func = getattr(self, method.lower(), None)
+                if method_func:
+                    input_data, image = method_func(input_data, image)  # Passa a imagem para o método e recebe a imagem processada de volta
+                else:
+                    print(f"ERROR: Method {method} is not implemented.")
+                    continue
+            
+            # Sobrescrever a imagem processada no mesmo diretório
+            image.save(image_path)
+            return image_file, input_data
+        
+        if use_threads:
+            # Processamento paralelo com threads
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [executor.submit(process_image, image_file, input_data) for image_file in image_files]
+                for future in concurrent.futures.as_completed(futures):
+                    image_file, input_data = future.result()
+
+        else:
+            # Processamento normal em série
+            for image_file in image_files:
+                _, input_data = process_image(image_file, input_data)
+        
+        print("INFO: Finished enhancement_processor.py")
         return input_data
 
     def get_config(self) -> list:
@@ -66,46 +99,24 @@ class EnhancementProcessor(AbstractProcessor):
 
         return methods
     
-    def msthgr(self, input_data: dict) -> dict:
+    def msthgr(self, input_data: dict, image: Image.Image) -> tuple:
         """
         Apply the MSTHGR enhancement method.
         :param input_data: Dictionary containing the directory of cropped images.
         :return: Updated input_data with processed images.
         """
-        cropped_images_directory = input_data.get("cropped_images_directory", "")
         
-        # Apply MSTHGR to each image in the directory
-        for image_filename in os.listdir(cropped_images_directory):
-            if image_filename.endswith(('.jpg', '.png')):
-                image_path = os.path.join(cropped_images_directory, image_filename)
-                
-                # Open the image using PIL and convert to grayscale
-                image = Image.open(image_path).convert('L')
-                image_array = np.array(image)
-                
-                enhanced_array = self.__msthgr.apply_msthgr(image_array)
-                enhanced_image = Image.fromarray(enhanced_array)
-                
-                # Save the enhanced image
-                enhanced_image_path = os.path.join(cropped_images_directory, f"enhanced_{image_filename}")
-                enhanced_image.save(enhanced_image_path)
-                
-                # cv2.imshow("Original Image", image_array)
-                # cv2.imshow("Enhanced Image", np.array(enhanced_image))
-                
-                # # Wait for a key press and close windows
-                # cv2.waitKey(0)
-                # cv2.destroyAllWindows()
+        msthgr_img = self.__msthgr.apply_msthgr(image)
             
-        return input_data, enhanced_image
+        return input_data, msthgr_img
 
-    def gray_scale(self, input_data: dict, image) -> dict:
+    def gray_scale(self, input_data: dict, image: Image.Image) -> tuple:
         """
         Convert the image to grayscale.
         """
         return image.convert("L"), input_data
     
-    def sauvola_threshold(self, input_data: dict, image) -> dict:
+    def sauvola_threshold(self, input_data: dict, image: Image.Image) -> tuple:
         """
         Applies the Sauvola threshold in the image.
         """
@@ -124,7 +135,7 @@ class EnhancementProcessor(AbstractProcessor):
         
         return input_data, binary_sauvola_img
     
-    def otsu_threshold(self, input_data: dict, image) -> dict:
+    def otsu_threshold(self, input_data: dict, image: Image.Image) -> tuple:
         """
         Applies the Otsu threshold in the image.
         """
@@ -143,7 +154,7 @@ class EnhancementProcessor(AbstractProcessor):
         
         return input_data, binary_otsu_img
 
-    def binarization(self, input_data: dict, image, threshold=128) -> dict:
+    def binarization(self, input_data: dict, image: Image.Image, threshold=128) -> Image.Image:
         """
         Realiza a binarização da imagem.
         
@@ -153,9 +164,9 @@ class EnhancementProcessor(AbstractProcessor):
         """
         binary_image = image.point(lambda p: 255 if p > threshold else 0, mode='1')
     
-        return binary_image
+        return input_data, binary_image
 
-    def pad_image_to_max_dimensions(self, image, input_data):
+    def pad_image_to_max_dimensions(self, input_data: dict, image: Image.Image) -> tuple:
         """
         Padroniza a imagem com a maior altura e largura, adicionando bordas pretas
         para manter a proporção sem cortar a imagem original.
@@ -179,7 +190,7 @@ class EnhancementProcessor(AbstractProcessor):
         # Adiciona bordas pretas ao redor da imagem para atingir as dimensões máximas
         return input_data, ImageOps.expand(image, padding, fill='black')
 
-    def pad_image_to_average_dimensions(self, image, input_data):
+    def pad_image_to_average_dimensions(self, input_data: dict, image: Image.Image) -> tuple:
         """
         Redimensiona a imagem para a média das dimensões fornecidas, 
         adicionando bordas pretas se necessário para manter a proporção.
