@@ -61,6 +61,7 @@ class CropProcessor(AbstractProcessor):
         # Variáveis para armazenar métricas
         min_width, max_width = float('inf'), 0
         min_height, max_height = float('inf'), 0
+        total_width, total_height, count = 0, 0, 0
 
         for filename in os.listdir(annotations_directory):
             if filename.endswith('.json'):
@@ -83,9 +84,13 @@ class CropProcessor(AbstractProcessor):
                         # Atualiza as métricas
                         min_width = min(min_width, metrics['min_width'])
                         max_width = max(max_width, metrics['max_width'])
+                        total_width += metrics['avg_width']
+                        
                         min_height = min(min_height, metrics['min_height'])
                         max_height = max(max_height, metrics['max_height'])
+                        total_height += metrics['avg_height']
 
+                        count += 1
         print("INFO:", self.FILE_NAME, '__crop_and_save_images', f'All cropped images saved from class: {description}')
 
         input_data['cropped_images_directory'] = os.path.join(cropped_images_directory, description)
@@ -129,9 +134,9 @@ class CropProcessor(AbstractProcessor):
         
         image = Image.open(image_path)
         
-        # Variáveis para armazenar métricas
         min_width, max_width = float('inf'), 0
         min_height, max_height = float('inf'), 0
+        total_width, total_height, count = 0, 0, 0
         
         for i, block in enumerate(blocks):
             points = block['points']
@@ -152,12 +157,21 @@ class CropProcessor(AbstractProcessor):
             max_width = max(max_width, width)
             min_height = min(min_height, height)
             max_height = max(max_height, height)
+
+            total_width += width
+            total_height += height
+            count += 1
+
+        avg_width = total_width / count if count > 0 else 0
+        avg_height = total_height / count if count > 0 else 0
         
         return {
             'min_width': min_width,
             'max_width': max_width,
             'min_height': min_height,
-            'max_height': max_height
+            'max_height': max_height,
+            'avg_width': avg_width,
+            'avg_height': avg_height
         }
     
     def get_config(self) -> tuple:
