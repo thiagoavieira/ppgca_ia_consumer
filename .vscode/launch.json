@@ -4,7 +4,25 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        
+        {
+            "type": "java",
+            "name": "Test_MSTHGR",
+            "request": "launch",
+            "mainClass": "MSTHGR.Test_MSTHGR",
+            "projectName": "ppgca_ia_consumer_3d61d9c0"
+        },
+        {
+            "type": "java",
+            "name": "Debug Java Program",
+            "request": "launch",
+            "mainClass": "MSTHGR.Test_MSTHGR",
+            "projectName": "seu-projeto-java",
+            "classPaths": [
+                "D:/Mestrado/ppgca_ia_consumer/app/java/src",
+                "D:/Mestrado/ppgca_ia_consumer/app/java/lib/ImageJ/ij.jar",
+                "D:/Mestrado/ppgca_ia_consumer/app/java/lib/MorphoLibJ/MorphoLibJ_.jar"
+            ]
+        },
         {
             "name": "Python Debugger: Current File",
             "type": "debugpy",
