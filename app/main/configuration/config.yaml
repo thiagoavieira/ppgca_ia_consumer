@@ -1,3 +1,11 @@
+consumer:
+  teeth_dict:
+    Implant:
+      - "Im"
+    Impacted:
+      - "M3i"
+      - "I"
+
 processors:
   CropProcessor:
     save_mode: True

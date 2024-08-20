@@ -1,6 +1,7 @@
 import os
 import sys
 from datetime import datetime
+from omegaconf import OmegaConf
 
 from app.main.processor.cnn_training_processor import CNNTrainingProcessor
 
@@ -18,6 +19,10 @@ class PipelineConsumer:
         self.final_processors = [p for p in processors if p.__class__.__name__ in final_processor_names]
         self.thread_mode = False
         self.last_log_time = datetime.now()
+        
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(current_dir, '..', 'configuration', 'config.yaml')
+        self.config = OmegaConf.load(config_path)
 
     def main(self):
         if self.thread_mode:
@@ -28,10 +33,7 @@ class PipelineConsumer:
             self._run_without_threads()
 
     def _run_without_threads(self):
-        teeth_dict = {
-            "Implant" : ["Im"],
-            "Impacted": ["M3i", "I"]
-        }
+        teeth_dict = self.config.consumer.teeth_dict
         
         for description, teeth_types in teeth_dict.items():
             single_dict = {description: teeth_types}
