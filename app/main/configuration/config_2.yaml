@@ -1,0 +1,42 @@
+consumer:
+  teeth_dict:
+    Implant:
+      - "Im"
+    Impacted:
+      - "M3i"
+      - "I"
+    Endodontics:
+      - "TeM"
+      - "Te"
+
+processors:
+  CropProcessor:
+    save_mode: True
+  
+  # SuperResolutionProcessor:
+  #   tooth: true
+
+  EnhancementProcessor:
+    methods: ['clahe', 'msthgr', 'gray_scale']
+    # all_disponible_methods: ['msthgr', 'clahe', 'gray_scale', 'binarization', 'sauvola_threshold', 'otsu_threshold', 
+    # 'pad_image_to_max_dimensions', 'pad_image_to_average_dimensions']
+
+  DataPreparationProcessor:
+    training: 80
+    validation: 20
+    total_images: 400
+    augmentation: True
+    cross_validation: False # TODO
+  
+  # This processor works as the last processor, each class will be processed, 
+  # after all that a multi-class training and evaluation metrics will be processed at the end.
+  CNNTrainingProcessor: 
+    networks: ['ResNet50V2', 'VGG16', 'GoogleNet']
+    activations: ["relu"] # "relu", "softmax", "",
+    lr: 0.001
+    epochs: 300
+    width_height: '256,256' #, 'pad_image_to_max_dimensions', 'pad_image_to_average_dimensions'
+    num_classes: 3
+  
+  EvaluationMetricsProcessor:
+    tooth: true

@@ -8,13 +8,16 @@ import os
 import yaml
 from app.main.processor import *
 
-def init_processors():
+def init_processors(config_filename):
     """
     Initialize the processors.
+    Params:
+        config_filename (str): The name of the configuration file to load.
     Returns:
+        processors (list): A list of initialized processors.
     """
     current_directory = os.path.dirname(os.path.abspath(__file__))
-    config_file = os.path.join(current_directory, '..', 'configuration', 'config.yaml')
+    config_file = os.path.join(current_directory, '..', 'configuration', config_filename)
     config_file = os.path.normpath(config_file)
 
     with open(config_file) as file:
