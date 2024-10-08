@@ -8,16 +8,18 @@ from datetime import datetime
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, as_completed
 # For VGG16 and GoogleNet
-from keras.models import Model, Sequential
-from keras.layers import Input, Dense, Conv2D, MaxPool2D , Flatten, MaxPooling2D, AveragePooling2D, GlobalAveragePooling2D, Dropout
-from keras.optimizers import Adam
-from keras.callbacks import ModelCheckpoint, EarlyStopping
-from keras.src.legacy.preprocessing.image import ImageDataGenerator
+#from keras.models import Model, Sequential
+#from keras.layers import Input, Dense, Conv2D, MaxPool2D , Flatten, MaxPooling2D, AveragePooling2D, GlobalAveragePooling2D, Dropout
+#from keras.optimizers import Adam
+#from keras.callbacks import ModelCheckpoint, EarlyStopping
+#from keras.src.legacy.preprocessing.image import ImageDataGenerator
 # For ResNet50V2
-from tensorflow.keras.layers import Activation, Dense, Flatten, BatchNormalization, Conv2D, MaxPool2D, concatenate
+from tensorflow.keras.layers import Activation, Dense, Flatten, BatchNormalization, Conv2D, MaxPool2D, concatenate, Input, Dense, Conv2D, MaxPool2D, Flatten, MaxPooling2D, AveragePooling2D, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import categorical_crossentropy
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from ..processor.abstract_processor import AbstractProcessor
 
@@ -127,38 +129,39 @@ class CNNTrainingProcessor(AbstractProcessor):
             shuffle=False
         )
 
-        model = Sequential()
-        model.add(Conv2D(input_shape=(self.width,self.height,self.num_classes),filters=64,kernel_size=(3,3),padding="same", activation="relu"))
-        model.add(Conv2D(filters=64,kernel_size=(3,3),padding="same", activation="relu"))
-        model.add(MaxPool2D(pool_size=(2,2),strides=(2,2)))
-        model.add(Conv2D(filters=128, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(Conv2D(filters=128, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(MaxPool2D(pool_size=(2,2),strides=(2,2)))
-        model.add(Conv2D(filters=256, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(Conv2D(filters=256, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(Conv2D(filters=256, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(MaxPool2D(pool_size=(2,2),strides=(2,2)))
-        model.add(Conv2D(filters=512, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(Conv2D(filters=512, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(Conv2D(filters=512, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(MaxPool2D(pool_size=(2,2),strides=(2,2)))
-        model.add(Conv2D(filters=512, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(Conv2D(filters=512, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(Conv2D(filters=512, kernel_size=(3,3), padding="same", activation="relu"))
-        model.add(MaxPool2D(pool_size=(2,2),strides=(2,2)))
+        base_model = tf.keras.applications.VGG16(
+            input_shape=(self.width, self.height, self.num_classes), 
+            include_top=False,  # remove a parte totalmente conectada
+            weights='imagenet'
+        )
+        base_model.trainable = True
 
-        model.add(Flatten())
-        model.add(Dense(units=4096,activation="relu"))
-        model.add(Dense(units=4096,activation="relu"))
-        model.add(Dense(units=self.num_classes, activation="softmax"))
+        tuning_layer_name = 'block4_pool' 
+        tuning_layer = base_model.get_layer(tuning_layer_name)
+        tuning_index = base_model.layers.index(tuning_layer)
 
-        opt = Adam(learning_rate=self.lr)
-        #model.compile(optimizer=opt, loss=keras.losses.categorical_crossentropy, metrics=['accuracy'])
-        model.compile(optimizer=opt, loss=tf.keras.losses.categorical_crossentropy, metrics=['accuracy'])
-        model.summary()
+        # Congela as camadas ate o tuning_index
+        for layer in base_model.layers[:tuning_index]:
+            layer.trainable = False
 
-        checkpoint = ModelCheckpoint(
-            "vgg16_1.keras", 
+        base_model.summary()
+
+        data_transforms = tf.keras.Sequential([
+            tf.keras.layers.Rescaling(1./127.5, offset=-1)
+        ], name='data_transforms')
+
+        model = tf.keras.Sequential([
+            data_transforms,
+            base_model,
+            tf.keras.layers.GlobalAveragePooling2D(),
+            tf.keras.layers.Dense(self.num_classes, activation='softmax')
+        ])
+
+        learning_rate = self.lr
+        model.compile(loss='categorical_crossentropy', optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), metrics=['accuracy'])
+
+        checkpoint = tf.keras.callbacks.ModelCheckpoint(
+            "vgg16_best_model.keras", 
             monitor='val_accuracy', 
             verbose=1, 
             save_best_only=True, 
@@ -166,28 +169,14 @@ class CNNTrainingProcessor(AbstractProcessor):
             mode='max', 
             save_freq='epoch'
         )
-        early = EarlyStopping(
+
+        early = tf.keras.callbacks.EarlyStopping(
             monitor='val_accuracy', 
             min_delta=0, 
-            patience=20, 
+            patience=50, 
             verbose=1, 
             mode='max'
         )
-
-        # steps_per_epoch = traindata.samples // traindata.batch_size
-        # validation_steps = testdata.samples // testdata.batch_size
-        # if steps_per_epoch == 0:
-        #     steps_per_epoch = 1
-        # if validation_steps == 0:
-        #     validation_steps = 1
-        # hist = model.fit(
-        #    steps_per_epoch=steps_per_epoch, 
-        #    x=traindata, 
-        #    validation_data=testdata, 
-        #    validation_steps=validation_steps, 
-        #    epochs=self.epochs, 
-        #    callbacks=[checkpoint, early]
-        #)
 
         hist = model.fit(
             traindata, 
@@ -204,8 +193,9 @@ class CNNTrainingProcessor(AbstractProcessor):
 
         model_filename = f"{final_accuracy:.2f}_{timestamp}.h5"
         model_filepath = os.path.join(results_directory, model_filename)
-        
+
         model.save(model_filepath)
+
         print(f"Modelo salvo em: {model_filepath}")
 
         y_true = testdata.classes  # Os verdadeiros do conjunto de validação
@@ -280,7 +270,7 @@ class CNNTrainingProcessor(AbstractProcessor):
         early = tf.keras.callbacks.EarlyStopping(
             monitor='val_accuracy', 
             min_delta=0, 
-            patience=20, 
+            patience=50, 
             verbose=1, 
             mode='max'
         )
@@ -304,7 +294,7 @@ class CNNTrainingProcessor(AbstractProcessor):
         model.save(model_filepath)
         print(f"Modelo salvo em: {model_filepath}")
 
-        y_true = testdata.classes  # Os rótulos verdadeiros do conjunto de validação
+        y_true = testdata.classes  # Os valores verdadeiros do conjunto de validação
         y_score = model.predict(testdata)  # As probabilidades preditas pelo modelo
         y_pred = np.argmax(y_score, axis=1)  # As classes preditas com base nas probabilidades
         f1 = f1_score(y_true, y_pred, average='weighted')
@@ -337,89 +327,64 @@ class CNNTrainingProcessor(AbstractProcessor):
             shuffle=False
         )
 
-        input_layer = Input(shape = (self.width,self.height,self.num_classes))
+        base_model = tf.keras.applications.InceptionV3(
+            input_shape=(self.width, self.height, self.num_classes), 
+            include_top=False,
+            weights='imagenet'
+        )
+        base_model.trainable = True
 
-        X = Conv2D(filters = 64, kernel_size = (7,7), strides = 2, padding = 'valid', activation = 'relu')(input_layer)
-        X = MaxPooling2D(pool_size = (3,3), strides = 2)(X)
-        X = Conv2D(filters = 64, kernel_size = (1,1), strides = 1, padding = 'same', activation = 'relu')(X)
-        X = Conv2D(filters = 192, kernel_size = (3,3), padding = 'same', activation = 'relu')(X)
-        X = MaxPooling2D(pool_size= (3,3), strides = 2)(X)
-        X = self.inception_block(X, f1 = 64, f2_conv1 = 96, f2_conv3 = 128, f3_conv1 = 16, f3_conv5 = 32, f4 = 32)
-        X = self.inception_block(X, f1 = 128, f2_conv1 = 128, f2_conv3 = 192, f3_conv1 = 32, f3_conv5 = 96, f4 = 64)
-        X = MaxPooling2D(pool_size= (3,3), strides = 2)(X)
-        X = self.inception_block(X, f1 = 192, f2_conv1 = 96, f2_conv3 = 208, f3_conv1 = 16, f3_conv5 = 48, f4 = 64)
+        tuning_layer_name = 'mixed7'  # Exemplo de camada na InceptionV3 e onde o finetunning vai comecar
+        tuning_layer = base_model.get_layer(tuning_layer_name)
+        tuning_index = base_model.layers.index(tuning_layer)
 
-        # Extra network 1:
-        X1 = AveragePooling2D(pool_size = (5,5), strides = 3)(X)
-        X1 = Conv2D(filters = 128, kernel_size = (1,1), padding = 'same', activation = 'relu')(X1)
-        X1 = Flatten()(X1)
-        X1 = Dense(1024, activation = 'relu')(X1)
-        X1 = Dropout(0.7)(X1)
-        X1 = Dense(5, activation = 'softmax')(X1)
+        for layer in base_model.layers[:tuning_index]:
+            layer.trainable = False
 
-        X = self.inception_block(X, f1 = 160, f2_conv1 = 112, f2_conv3 = 224, f3_conv1 = 24, f3_conv5 = 64, f4 = 64)
-        X = self.inception_block(X, f1 = 128, f2_conv1 = 128, f2_conv3 = 256, f3_conv1 = 24, f3_conv5 = 64, f4 = 64)
-        X = self.inception_block(X, f1 = 112, f2_conv1 = 144, f2_conv3 = 288, f3_conv1 = 32, f3_conv5 = 64, f4 = 64)
+        base_model.summary()
 
-        # Extra network 2:
-        X2 = AveragePooling2D(pool_size = (5,5), strides = 3)(X)
-        X2 = Conv2D(filters = 128, kernel_size = (1,1), padding = 'same', activation = 'relu')(X2)
-        X2 = Flatten()(X2)
-        X2 = Dense(1024, activation = 'relu')(X2)
-        X2 = Dropout(0.7)(X2)
+        data_transforms = tf.keras.Sequential([
+            tf.keras.layers.Rescaling(1./127.5, offset=-1)
+        ], name='data_transforms')
 
-        X2 = Dense(1000, activation = 'softmax')(X2)
-        
-        X = self.inception_block(X, f1 = 256, f2_conv1 = 160, f2_conv3 = 320, f3_conv1 = 32, f3_conv5 = 128, f4 = 128)
-        X = MaxPooling2D(pool_size = (3,3), strides = 2)(X)
-        X = self.inception_block(X, f1 = 256, f2_conv1 = 160, f2_conv3 = 320, f3_conv1 = 32, f3_conv5 = 128, f4 = 128)
-        X = self.inception_block(X, f1 = 384, f2_conv1 = 192, f2_conv3 = 384, f3_conv1 = 48, f3_conv5 = 128, f4 = 128)
-        X = GlobalAveragePooling2D(name = 'GAPL')(X)
-        X = Dropout(0.4)(X)
-
-        X = Dense(self.num_classes, activation = 'softmax')(X)
-
-        model = Model(input_layer, [X, X1, X2], name = 'GoogLeNet')
+        model = tf.keras.Sequential([
+            data_transforms,
+            base_model,
+            tf.keras.layers.GlobalAveragePooling2D(),
+            tf.keras.layers.Dense(self.num_classes, activation='softmax')
+        ])
 
         learning_rate = self.lr
+        model.compile(loss='categorical_crossentropy', optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), metrics=['accuracy'])
 
-        model.compile(
-            loss='categorical_crossentropy', 
-            optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
-            metrics=['accuracy'] * len(model.output_names)
-        )
-
-        # callback para salvar o melhor modelo
         checkpoint = tf.keras.callbacks.ModelCheckpoint(
-            "googlenet_best_model.keras",  # Nome do arquivo do modelo salvo
-            monitor='val_accuracy',        # Monitorar a métrica de acurácia na validação
-            verbose=1,                     # Mostrar mensagens de salvamento
-            save_best_only=True,           # Salvar apenas o melhor modelo
-            save_weights_only=False,       # Salvar o modelo completo, não apenas os pesos
-            mode='max',                    # Salvar quando a métrica monitorada estiver no máximo
-            save_freq='epoch'              # Salvar ao final de cada epoch
+            "googlenet_best_model.keras", 
+            monitor='val_accuracy', 
+            verbose=1, 
+            save_best_only=True, 
+            save_weights_only=False, 
+            mode='max', 
+            save_freq='epoch'
         )
 
-        # callback de parada antecipada
         early = tf.keras.callbacks.EarlyStopping(
-            monitor='val_accuracy',  # Monitorar a métrica de acurácia na validação
-            min_delta=0,             # Mínima mudança na métrica para considerar uma melhoria
-            patience=20,             # Número de epochs para esperar antes de parar se não houver melhoria
-            verbose=1,               # Mostrar mensagens de parada antecipada
-            mode='max'               # Parar quando a métrica monitorada estiver no máximo
+            monitor='val_accuracy', 
+            min_delta=0, 
+            patience=20, 
+            verbose=1, 
+            mode='max'
         )
 
         hist = model.fit(
-            traindata,
-            validation_data=testdata,
-            epochs=self.epochs,
-            callbacks=[checkpoint, early]  
+            traindata, 
+            validation_data=testdata, 
+            epochs=self.epochs, 
+            callbacks=[checkpoint, early]
         )
 
         results_directory = os.path.join(self.current_directory, '..', 'data', 'results', 'GoogLeNet')
         os.makedirs(results_directory, exist_ok=True)
-        final_accuracy_key = 'dense_4_accuracy' if 'dense_4_accuracy' in hist.history else 'dense_8_accuracy'
-        final_accuracy = float(hist.history[final_accuracy_key][-1])
+        final_accuracy = hist.history['accuracy'][-1]
         now = datetime.now()
         timestamp = now.strftime("%Y%m%d_%H%M")
 
@@ -442,46 +407,6 @@ class CNNTrainingProcessor(AbstractProcessor):
         input_data['GoogLeNet_f1_score'] = f1
         
         return input_data
-    
-    def inception_block(self, input_layer, f1, f2_conv1, f2_conv3, f3_conv1, f3_conv5, f4): 
-        """
-        Creates a custom Inception block for a convolutional neural network.
-
-        Parameters:
-        -----------
-        input_layer : tf.Tensor
-            The input layer for the Inception block. Typically, the output from a previous convolutional layer.
-        f1 : int -> Number of filters for the 1x1 convolutional layer in the first path.
-        f2_conv1 : int -> Number of filters for the first 1x1 convolutional layer in the second path.
-        f2_conv3 : int ->  Number of filters for the 3x3 convolutional layer in the second path.
-        f3_conv1 : int -> Number of filters for the first 1x1 convolutional layer in the third path.
-        f3_conv5 : int -> Number of filters for the 5x5 convolutional layer in the third path.
-        f4 : int -> Number of filters for the 1x1 convolutional layer in the fourth path, after the MaxPooling operation.
-        Returns:
-        --------
-        output_layer : tf.Tensor -> The output layer resulting from the concatenation of the four paths in the Inception block.
-
-        Description:
-        ------------
-        The Inception block is a complex module that applies multiple convolutions and pooling operations in parallel
-        and concatenates their outputs to form the block's output. This block is widely used in architectures like
-        GoogleNet (Inception-v1) to extract features at different scales simultaneously.
-        """
-
-        path1 = Conv2D(filters=f1, kernel_size = (1,1), padding = 'same', activation = 'relu')(input_layer)
-
-        path2 = Conv2D(filters = f2_conv1, kernel_size = (1,1), padding = 'same', activation = 'relu')(input_layer)
-        path2 = Conv2D(filters = f2_conv3, kernel_size = (3,3), padding = 'same', activation = 'relu')(path2)
-
-        path3 = Conv2D(filters = f3_conv1, kernel_size = (1,1), padding = 'same', activation = 'relu')(input_layer)
-        path3 = Conv2D(filters = f3_conv5, kernel_size = (5,5), padding = 'same', activation = 'relu')(path3)
-
-        path4 = MaxPooling2D((3,3), strides= (1,1), padding = 'same')(input_layer)
-        path4 = Conv2D(filters = f4, kernel_size = (1,1), padding = 'same', activation = 'relu')(path4)
-
-        output_layer = concatenate([path1, path2, path3, path4], axis = -1)
-
-        return output_layer
     
     def get_max_dimensions(self):
         """
