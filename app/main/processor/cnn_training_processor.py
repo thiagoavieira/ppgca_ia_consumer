@@ -1,11 +1,12 @@
 import json
+import numpy as np
 import torch
 import time
-import sklearn
-import keras, os
-import matplotlib.pyplot as plt
+import os
 import tensorflow as tf
 from datetime import datetime
+from PIL import Image
+from concurrent.futures import ThreadPoolExecutor, as_completed
 # For VGG16 and GoogleNet
 from keras.models import Model, Sequential
 from keras.layers import Input, Dense, Conv2D, MaxPool2D , Flatten, MaxPooling2D, AveragePooling2D, GlobalAveragePooling2D, Dropout
@@ -17,7 +18,7 @@ from tensorflow.keras.layers import Activation, Dense, Flatten, BatchNormalizati
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import categorical_crossentropy
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from ..processor.abstract_processor import AbstractProcessor
 
 
@@ -30,7 +31,7 @@ class CNNTrainingProcessor(AbstractProcessor):
 
     def __init__(self, conf):
         super(CNNTrainingProcessor, self).__init__(conf)
-        self.networks, self.activations, self.lr, self.epochs = self.get_configs()
+        self.networks, self.activations, self.lr, self.epochs, self.width_height, self.num_classes = self.get_configs()
         self.gpu_count = torch.cuda.device_count()
         self.device_queue = list(range(self.gpu_count)) if self.gpu_count > 0 else ['cpu']
         self.current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +47,14 @@ class CNNTrainingProcessor(AbstractProcessor):
         print("DEBUG: ", self.FILE_NAME, 'pre_process', 'Checking if the message type is a dict')
         if type(input_data) is not dict:
             input_data = json.loads(input_data)
+
+        if isinstance(self.width_height, str):
+            if self.width_height == 'pad_image_to_max_dimensions':
+                self.width, self.height = self.get_max_dimensions()
+            elif self.width_height == 'pad_image_to_average_dimensions':
+                self.width, self.height = self.get_average_dimensions()
+            else:
+                self.width, self.height = map(int, self.width_height.split(','))
 
         return input_data
 
@@ -80,10 +89,10 @@ class CNNTrainingProcessor(AbstractProcessor):
     def _process_on_device(self, input_data: dict, network: str, device: str) -> dict:
         """
         Process the input data using the specified network on the given device.
-        :param input_data: Dados de entrada.
-        :param network: Nome da rede.
-        :param device: Dispositivo (GPU ou CPU) onde o processamento ocorrerá.
-        :return: Dados processados.
+        :param input_data: entry's dict.
+        :param network: CNN's name.
+        :param device: GPU or CPU where the processing occurs.
+        :return: final's dict.
         """
         print("INFO: ", self.FILE_NAME, '_process_on_device', f"Processing {network} on {device}")
 
@@ -105,20 +114,21 @@ class CNNTrainingProcessor(AbstractProcessor):
         trdata = ImageDataGenerator()
         traindata = trdata.flow_from_directory(
             directory=self.training_path,
-            target_size=(224,224),
+            target_size=(self.width,self.height),
             batch_size=32,
             class_mode='categorical'
         )
         tsdata = ImageDataGenerator()
         testdata = tsdata.flow_from_directory(
             directory=self.validation_path,
-            target_size=(224,224),
+            target_size=(self.width,self.height),
             batch_size=32,
-            class_mode='categorical'
+            class_mode='categorical',
+            shuffle=False
         )
 
         model = Sequential()
-        model.add(Conv2D(input_shape=(224,224,3),filters=64,kernel_size=(3,3),padding="same", activation="relu"))
+        model.add(Conv2D(input_shape=(self.width,self.height,self.num_classes),filters=64,kernel_size=(3,3),padding="same", activation="relu"))
         model.add(Conv2D(filters=64,kernel_size=(3,3),padding="same", activation="relu"))
         model.add(MaxPool2D(pool_size=(2,2),strides=(2,2)))
         model.add(Conv2D(filters=128, kernel_size=(3,3), padding="same", activation="relu"))
@@ -140,7 +150,7 @@ class CNNTrainingProcessor(AbstractProcessor):
         model.add(Flatten())
         model.add(Dense(units=4096,activation="relu"))
         model.add(Dense(units=4096,activation="relu"))
-        model.add(Dense(units=2, activation="softmax"))
+        model.add(Dense(units=self.num_classes, activation="softmax"))
 
         opt = Adam(learning_rate=self.lr)
         #model.compile(optimizer=opt, loss=keras.losses.categorical_crossentropy, metrics=['accuracy'])
@@ -198,8 +208,17 @@ class CNNTrainingProcessor(AbstractProcessor):
         model.save(model_filepath)
         print(f"Modelo salvo em: {model_filepath}")
 
+        y_true = testdata.classes  # Os verdadeiros do conjunto de validação
+        y_score = model.predict(testdata)  # As probabilidades preditas pelo modelo
+        y_pred = np.argmax(y_score, axis=1)  # As classes preditas com base nas probabilidades
+        f1 = f1_score(y_true, y_pred, average='weighted')
+
         input_data['VGG16_output'] = hist.history
         input_data['VGG16_model'] = f"{final_accuracy:.2f}_{timestamp}"
+        input_data['VGG16_y_true'] = y_true.tolist()
+        input_data['VGG16_y_score'] = y_score.tolist() 
+        input_data['VGG16_y_pred'] = y_pred.tolist()
+        input_data['VGG16_f1_score'] = f1
 
         return input_data
 
@@ -209,19 +228,20 @@ class CNNTrainingProcessor(AbstractProcessor):
         trdata = ImageDataGenerator()
         traindata = trdata.flow_from_directory(
             directory=self.training_path,
-            target_size=(256,256),
+            target_size=(self.width,self.height),
             batch_size=32,
             class_mode='categorical'
         )
         tsdata = ImageDataGenerator()
         testdata = tsdata.flow_from_directory(
             directory=self.validation_path,
-            target_size=(256,256),
+            target_size=(self.width,self.height),
             batch_size=32,
-            class_mode='categorical'
+            class_mode='categorical',
+            shuffle=False
         )
 
-        base_model = tf.keras.applications.ResNet50V2(input_shape=(256,256,3), include_top=False)
+        base_model = tf.keras.applications.ResNet50V2(input_shape=(self.width,self.height,self.num_classes), include_top=False)
         base_model.trainable = True
 
         tuning_layer_name = 'conv5_block1_preact_bn'
@@ -241,7 +261,7 @@ class CNNTrainingProcessor(AbstractProcessor):
             data_transforms, 
             base_model, 
             tf.keras.layers.GlobalAveragePooling2D(), 
-            tf.keras.layers.Dense(2, activation='softmax')
+            tf.keras.layers.Dense(self.num_classes, activation='softmax')
         ])
 
         learning_rate = self.lr
@@ -284,8 +304,17 @@ class CNNTrainingProcessor(AbstractProcessor):
         model.save(model_filepath)
         print(f"Modelo salvo em: {model_filepath}")
 
+        y_true = testdata.classes  # Os rótulos verdadeiros do conjunto de validação
+        y_score = model.predict(testdata)  # As probabilidades preditas pelo modelo
+        y_pred = np.argmax(y_score, axis=1)  # As classes preditas com base nas probabilidades
+        f1 = f1_score(y_true, y_pred, average='weighted')
+
         input_data['ResNet50V2_output'] = hist.history
         input_data['ResNet50V2_model'] = f"{final_accuracy:.2f}_{timestamp}"
+        input_data['ResNet50V2_y_true'] = y_true.tolist()
+        input_data['ResNet50V2_y_score'] = y_score.tolist() 
+        input_data['ResNet50V2_y_pred'] = y_pred.tolist()
+        input_data['ResNet50V2_f1_score'] = f1
 
         return input_data
 
@@ -295,19 +324,20 @@ class CNNTrainingProcessor(AbstractProcessor):
         trdata = ImageDataGenerator()
         traindata = trdata.flow_from_directory(
             directory=self.training_path,
-            target_size=(224,224),
+            target_size=(self.width,self.height),
             batch_size=32,
             class_mode='categorical'
         )
         tsdata = ImageDataGenerator()
         testdata = tsdata.flow_from_directory(
             directory=self.validation_path,
-            target_size=(224,224),
+            target_size=(self.width,self.height),
             batch_size=32,
-            class_mode='categorical'
+            class_mode='categorical',
+            shuffle=False
         )
 
-        input_layer = Input(shape = (224, 224, 3))
+        input_layer = Input(shape = (self.width,self.height,self.num_classes))
 
         X = Conv2D(filters = 64, kernel_size = (7,7), strides = 2, padding = 'valid', activation = 'relu')(input_layer)
         X = MaxPooling2D(pool_size = (3,3), strides = 2)(X)
@@ -347,8 +377,7 @@ class CNNTrainingProcessor(AbstractProcessor):
         X = GlobalAveragePooling2D(name = 'GAPL')(X)
         X = Dropout(0.4)(X)
 
-        num_classes = 2 # Importante mudar
-        X = Dense(num_classes, activation = 'softmax')(X)
+        X = Dense(self.num_classes, activation = 'softmax')(X)
 
         model = Model(input_layer, [X, X1, X2], name = 'GoogLeNet')
 
@@ -399,9 +428,18 @@ class CNNTrainingProcessor(AbstractProcessor):
         
         model.save(model_filepath)
         print(f"Modelo salvo em: {model_filepath}")
-        
+
+        y_true = testdata.classes  # Os verdadeiros do conjunto de validação
+        y_score = model.predict(testdata)  # As probabilidades preditas pelo modelo
+        y_pred = np.argmax(y_score, axis=1)  # As classes preditas com base nas probabilidades
+        f1 = f1_score(y_true, y_pred, average='weighted')
+
         input_data['GoogLeNet_output'] = hist.history
         input_data['GoogLeNet_model'] = f"{final_accuracy:.2f}_{timestamp}"
+        input_data['GoogLeNet_y_true'] = y_true.tolist()
+        input_data['GoogLeNet_y_score'] = y_score.tolist() 
+        input_data['GoogLeNet_y_pred'] = y_pred.tolist()
+        input_data['GoogLeNet_f1_score'] = f1
         
         return input_data
     
@@ -444,7 +482,53 @@ class CNNTrainingProcessor(AbstractProcessor):
         output_layer = concatenate([path1, path2, path3, path4], axis = -1)
 
         return output_layer
-   
+    
+    def get_max_dimensions(self):
+        """
+        Get the maximum width and height of images in the training and validation directories.
+        """
+        image_paths = self.get_image_paths()
+        max_width = 0
+        max_height = 0
+        
+        with ThreadPoolExecutor() as executor:
+            future_to_image = {executor.submit(self.process_image, img_path): img_path for img_path in image_paths}
+            
+            for future in as_completed(future_to_image):
+                width, height = future.result()
+                max_width = max(max_width, width)
+                max_height = max(max_height, height)
+        
+        return max_width, max_height
+
+    def get_average_dimensions(self):
+        """
+        Get the average width and height of images in the training and validation directories.
+        """
+        image_paths = self.get_image_paths()
+        widths = []
+        heights = []
+        
+        with ThreadPoolExecutor() as executor:
+            future_to_image = {executor.submit(self.process_image, img_path): img_path for img_path in image_paths}
+            
+            for future in as_completed(future_to_image):
+                width, height = future.result()
+                widths.append(width)
+                heights.append(height)
+        
+        avg_width = int(np.mean(widths))
+        avg_height = int(np.mean(heights))
+        
+        return avg_width, avg_height
+    
+    def process_image(self, image_path):
+        """
+        Helper function to open an image and return its dimensions.
+        """
+        with Image.open(image_path) as img:
+            return img.size
+    
     def get_configs(self) -> tuple:
         """
         Get configuration from yaml.
@@ -458,13 +542,17 @@ class CNNTrainingProcessor(AbstractProcessor):
             activations = self.conf["activations"]
             lr = float(self.conf["lr"])
             epochs = int(self.conf["epochs"])
+            width_height = self.conf["width_height"]
+            num_classes = int(self.conf["num_classes"])
         else:
             networks = ['VGG16', 'ResNet50V2', 'GoogleNet']
             activations = ["relu"]
             lr = 0.001
             epochs = 5
+            width_height = '256,256'
+            num_classes = 3
             print("ERROR: ", self.FILE_NAME, 'get_configs', 'The processor CNNTrainingProcessor needs configuration, using default configs.',
                                 self.INTERNAL_SERVER_ERROR)
 
-        return networks, activations, lr, epochs
+        return networks, activations, lr, epochs, width_height, num_classes
     

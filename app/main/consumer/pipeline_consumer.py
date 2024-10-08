@@ -3,8 +3,6 @@ import sys
 from datetime import datetime
 from omegaconf import OmegaConf
 
-from app.main.processor.cnn_training_processor import CNNTrainingProcessor
-
 from ..util.enum_constants import Constants
 
 class PipelineConsumer:
@@ -13,7 +11,7 @@ class PipelineConsumer:
     """
     FILE_NAME = 'pipeline_consumer.py'
 
-    def __init__(self, processors):
+    def __init__(self, processors, config_filename):
         final_processor_names = ["CNNTrainingProcessor", "EvaluationMetricsProcessor"]
         self.processors = [p for p in processors if p.__class__.__name__ not in final_processor_names]
         self.final_processors = [p for p in processors if p.__class__.__name__ in final_processor_names]
@@ -21,7 +19,8 @@ class PipelineConsumer:
         self.last_log_time = datetime.now()
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        config_path = os.path.join(current_dir, '..', 'configuration', 'config.yaml')
+        config_path = os.path.join(current_dir, '..', 'configuration', config_filename)
+        self.config_filename = config_filename
         self.config = OmegaConf.load(config_path)
 
     def main(self):
@@ -36,11 +35,13 @@ class PipelineConsumer:
         teeth_dict = self.config.consumer.teeth_dict
         
         for description, teeth_types in teeth_dict.items():
-            single_dict = {description: teeth_types}
+            single_dict = {
+                description: teeth_types
+                }
             print("DEBUG: ", self.FILE_NAME, '_run_without_threads', f"Dict to be sent to pipeline: {single_dict}")
             self.pipeline(single_dict, "processors")
         
-        self.pipeline({}, "final_processors")
+        self.pipeline({"run": self.config_filename}, "final_processors")
 
     def _run_with_threads(self):
         """

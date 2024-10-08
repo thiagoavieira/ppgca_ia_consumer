@@ -1,9 +1,14 @@
 import os
 import json
-import random
 import shutil
-import matplotlib.pyplot as plt
 from pathlib import Path
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import roc_curve, auc, f1_score, precision_recall_curve, roc_auc_score
+from sklearn.preprocessing import label_binarize
+from pathlib import Path
+
+import yaml
 from ..processor.abstract_processor import AbstractProcessor
 
 
@@ -56,7 +61,7 @@ class EvaluationMetricsProcessor(AbstractProcessor):
                 loss_key = 'loss'
                 val_loss_key = 'val_loss'
                 
-                # Plotar a acurácia
+                # Accuraccy plot
                 plt.figure()
                 plt.plot(model_results[acc_key], label='Training Accuracy')
                 plt.plot(model_results[val_acc_key], label='Validation Accuracy')
@@ -67,7 +72,7 @@ class EvaluationMetricsProcessor(AbstractProcessor):
                 plt.savefig(model_dir / f'{model_name}_accuracy_plot.png')
                 plt.close()
 
-                # Plotar a perda
+                # Loss plot
                 plt.figure()
                 plt.plot(model_results[loss_key], label='Training Loss')
                 plt.plot(model_results[val_loss_key], label='Validation Loss')
@@ -78,6 +83,74 @@ class EvaluationMetricsProcessor(AbstractProcessor):
                 plt.savefig(model_dir / f'{model_name}_loss_plot.png')
                 plt.close()
 
-                print(f'Plots saved in {model_dir}')
-        
+                print("INFO: ", self.FILE_NAME, 'process', f'Plots saved in {model_dir}')
+                
+                # Calcular a curva ROC e AUC
+                y_true = input_data[f'{model_name}_y_true']
+                y_score = input_data[f'{model_name}_y_score']
+                y_pred = input_data[f'{model_name}_y_pred']
+
+                classes = np.unique(y_true)
+                y_true_bin = label_binarize(y_true, classes=classes)
+
+                for i, class_label in enumerate(classes):
+                    fpr, tpr, _ = roc_curve(y_true_bin[:, i], np.array(y_score)[:, i])
+                    roc_auc = auc(fpr, tpr)
+
+                    plt.figure()
+                    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+                    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+                    plt.xlim([0.0, 1.0])
+                    plt.ylim([0.0, 1.05])
+                    plt.xlabel('False Positive Rate')
+                    plt.ylabel('True Positive Rate')
+                    plt.title(f'{model_name} ROC Curve for class {class_label}')
+                    plt.legend(loc="lower right")
+                    plt.savefig(model_dir / f'{model_name}_roc_curve_class_{class_label}.png')
+                    plt.close()
+
+                    precision, recall, _ = precision_recall_curve(y_true_bin[:, i], np.array(y_score)[:, i])
+                    f1 = f1_score(y_true, y_pred, average='weighted')
+
+                    plt.figure()
+                    plt.plot(recall, precision, lw=2, color='blue', label=f'{model_name} PR curve')
+                    plt.xlabel('Recall')
+                    plt.ylabel('Precision')
+                    plt.title(f'{model_name} Precision-Recall Curve for class {class_label}')
+                    plt.text(0.6, 0.2, f'F1 Score: {f1:.2f}', fontsize=12, color='red',
+                            bbox=dict(facecolor='white', alpha=0.8))  # Caixa de fundo branco para o texto do f1score
+                    plt.legend(loc="lower left")
+                    plt.savefig(model_dir / f'{model_name}_precision_recall_curve_class_{class_label}.png')
+                    plt.close()
+
+                print("INFO: ", self.FILE_NAME, 'process', f'Plots saved in {model_dir}')
+
+                run_name = input_data.get("run", "default_config.yaml")
+                yaml_file_path = model_dir / f'{run_name}.yaml'
+
+                config_dir = Path(__file__).resolve().parent.parent / 'configuration'
+                config_file_path = config_dir / run_name
+
+                try:
+                    with open(config_file_path, 'r') as config_file:
+                        yaml_content = yaml.safe_load(config_file)
+                except FileNotFoundError:
+                    yaml_content = {}
+                    print(f"WARNING: {self.FILE_NAME}", 'process', f"File {run_name} not found, saving an empty YAML file.")
+
+                with open(yaml_file_path, 'w') as yaml_file:
+                    yaml.dump(yaml_content, yaml_file)
+                print(f"INFO: {self.FILE_NAME}", 'process', f"Created {run_name}.yaml in {model_dir}")
+
+                parent_dir = model_dir.parent
+                current_folder_name = model_dir.name
+                h5_file_path = parent_dir / f'{current_folder_name}.h5'
+
+                if h5_file_path.exists():
+                    destination_path = model_dir / h5_file_path.name # movendo arquivo de treinamento
+                    shutil.move(str(h5_file_path), str(destination_path))
+                    print(f"INFO: {self.FILE_NAME}", 'process', f"Training file {h5_file_path.name} moved to {destination_path}")
+                else:
+                    print(f"WARNING: {self.FILE_NAME}", 'process', f"Not found {h5_file_path.name} in {parent_dir}")
+                    
         return input_data
