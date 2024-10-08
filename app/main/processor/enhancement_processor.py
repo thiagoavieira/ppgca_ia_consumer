@@ -107,9 +107,9 @@ class EnhancementProcessor(AbstractProcessor):
             
         return input_data, msthgr_img
 
-    def gray_scale(self, input_data: dict, image) -> tuple:
+    def gray_scale(self, input_data: dict, image: Image.Image) -> tuple:
         """
-        Convert the image to grayscale.
+        Convert the image to grayscale and return it as a PIL Image.
         """
         if isinstance(image, Image.Image):
             image_np = np.array(image.convert("L"))
@@ -118,8 +118,10 @@ class EnhancementProcessor(AbstractProcessor):
                 image_np = np.mean(image, axis=2).astype(np.uint8)
             else:
                 image_np = image
-        
-        return input_data, image_np
+
+        grayscale_image_pil = Image.fromarray(image_np)
+
+        return input_data, grayscale_image_pil
 
     def sauvola_threshold(self, input_data: dict, image: Image.Image) -> tuple:
         """
@@ -146,6 +148,27 @@ class EnhancementProcessor(AbstractProcessor):
         binary_otsu_img = Image.fromarray(img_as_ubyte(binary_otsu))
         
         return input_data, binary_otsu_img
+    
+    def clahe(self, input_data: dict, image: Image.Image) -> Image.Image:
+        """
+        Applies CLAHE (Contrast Limited Adaptive Histogram Equalization) to the input image.
+        
+        :param image: Input image in PIL format
+        :param clip_limit: Threshold for contrast limiting (default 16)
+        :param tile_grid_size: Size of grid for histogram equalization (default (8, 8))
+        :return: Image with CLAHE applied in PIL format
+        """
+        image_cv = np.array(image)
+
+        if len(image_cv.shape) == 3 and image_cv.shape[2] == 3:
+            image_cv = cv2.cvtColor(image_cv, cv2.COLOR_RGB2GRAY)
+
+        clahe = cv2.createCLAHE(clipLimit=10)
+        cl1 = clahe.apply(image_cv)
+        clahe_image_rgb = cv2.cvtColor(cl1, cv2.COLOR_GRAY2RGB)
+        clahe_image_pil = Image.fromarray(clahe_image_rgb)
+
+        return input_data, clahe_image_pil
 
     def binarization(self, input_data: dict, image: Image.Image, threshold=128) -> Image.Image:
         """

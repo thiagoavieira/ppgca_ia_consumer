@@ -26,7 +26,7 @@ class MSTHGRService:
         :param iter: The number of iterations to apply.
         :return: The enhanced image in PIL format.
         """
-        print("DEBUG:", self.FILE_NAME, 'apply_msthgr', 'Applying MSTHGR enhancement')
+        # print("DEBUG:", self.FILE_NAME, 'apply_msthgr', 'Applying MSTHGR enhancement')
 
         # Converter para um array NumPy
         ip_arr = np.array(image)

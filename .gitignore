@@ -3,6 +3,7 @@
 *.java
 
 out/
+DRCT/
 .vscode/
 .jython_cache/
 app/java/
@@ -22,11 +23,18 @@ app/main/data/cropped_images/training/Impacted/*
 app/main/data/cropped_images/training/Implant/*
 !app/main/data/cropped_images/training/Implant/.gitkeep
 
+app/main/data/cropped_images/training/Endodontics/
+!app/main/data/cropped_images/training/Endodontics/.gitkeep
+
 app/main/data/cropped_images/validation/Impacted/*
 !app/main/data/cropped_images/validation/Impacted/.gitkeep
 
 app/main/data/cropped_images/validation/Implant/*
 !app/main/data/cropped_images/validation/Implant/.gitkeep
+
+app/main/data/cropped_images/validation/Endodontics/
+!app/main/data/cropped_images/validation/Endodontics/.gitkeep
+
 
 app/main/data/images/*
 !app/main/data/images/.gitkeep
