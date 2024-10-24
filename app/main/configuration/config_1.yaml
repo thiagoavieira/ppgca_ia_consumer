@@ -31,12 +31,13 @@ processors:
   # This processor works as the last processor, each class will be processed, 
   # after all that a multi-class training and evaluation metrics will be processed at the end.
   CNNTrainingProcessor: 
-    networks: ['ResNet50V2', 'VGG16', 'GoogleNet']
+    networks: ['ResNet50V2']
     activations: ["relu"] # "relu", "softmax", "",
     lr: 0.001
     epochs: 300
-    width_height: '256,256' #, 'pad_image_to_max_dimensions', 'pad_image_to_average_dimensions'
+    width_height: '224,224' #, 'pad_image_to_max_dimensions', 'pad_image_to_average_dimensions'
     num_classes: 3
+    fine_tune: false
   
   EvaluationMetricsProcessor:
     tooth: true

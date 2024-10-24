@@ -55,9 +55,9 @@ class EvaluationMetricsProcessor(AbstractProcessor):
                 model_dir = results_directory / model_name / model_dir_name
                 os.makedirs(model_dir, exist_ok=True)
                 
-                # Identificar as chaves específicas para GoogLeNet
-                acc_key = next((k for k in model_results if 'accuracy' in k and 'val' not in k), 'accuracy')
-                val_acc_key = next((k for k in model_results if 'val' in k and 'accuracy' in k), 'val_accuracy')
+                # chaves
+                acc_key = 'accuracy'
+                val_acc_key = 'val_accuracy'
                 loss_key = 'loss'
                 val_loss_key = 'val_loss'
                 
@@ -65,6 +65,10 @@ class EvaluationMetricsProcessor(AbstractProcessor):
                 plt.figure()
                 plt.plot(model_results[acc_key], label='Training Accuracy')
                 plt.plot(model_results[val_acc_key], label='Validation Accuracy')
+                max_train_acc = max(model_results[acc_key])
+                max_val_acc = max(model_results[val_acc_key])
+                plt.text(len(model_results[acc_key]) - 1, max_train_acc, f'{max_train_acc:.2f}', color='blue', fontsize=12)
+                plt.text(len(model_results[val_acc_key]) - 1, max_val_acc, f'{max_val_acc:.2f}', color='orange', fontsize=12)
                 plt.title(f'{model_name} Accuracy')
                 plt.xlabel('Epochs')
                 plt.ylabel('Accuracy')
@@ -76,6 +80,10 @@ class EvaluationMetricsProcessor(AbstractProcessor):
                 plt.figure()
                 plt.plot(model_results[loss_key], label='Training Loss')
                 plt.plot(model_results[val_loss_key], label='Validation Loss')
+                min_train_loss = min(model_results[loss_key])
+                min_val_loss = min(model_results[val_loss_key])
+                plt.text(len(model_results[loss_key]) - 1, min_train_loss, f'{min_train_loss:.2f}', color='blue', fontsize=12)
+                plt.text(len(model_results[val_loss_key]) - 1, min_val_loss, f'{min_val_loss:.2f}', color='orange', fontsize=12)
                 plt.title(f'{model_name} Loss')
                 plt.xlabel('Epochs')
                 plt.ylabel('Loss')
@@ -126,7 +134,7 @@ class EvaluationMetricsProcessor(AbstractProcessor):
                 print("INFO: ", self.FILE_NAME, 'process', f'Plots saved in {model_dir}')
 
                 run_name = input_data.get("run", "default_config.yaml")
-                yaml_file_path = model_dir / f'{run_name}.yaml'
+                yaml_file_path = model_dir / run_name
 
                 config_dir = Path(__file__).resolve().parent.parent / 'configuration'
                 config_file_path = config_dir / run_name
@@ -142,15 +150,9 @@ class EvaluationMetricsProcessor(AbstractProcessor):
                     yaml.dump(yaml_content, yaml_file)
                 print(f"INFO: {self.FILE_NAME}", 'process', f"Created {run_name}.yaml in {model_dir}")
 
-                parent_dir = model_dir.parent
-                current_folder_name = model_dir.name
-                h5_file_path = parent_dir / f'{current_folder_name}.h5'
-
-                if h5_file_path.exists():
-                    destination_path = model_dir / h5_file_path.name # movendo arquivo de treinamento
-                    shutil.move(str(h5_file_path), str(destination_path))
-                    print(f"INFO: {self.FILE_NAME}", 'process', f"Training file {h5_file_path.name} moved to {destination_path}")
-                else:
-                    print(f"WARNING: {self.FILE_NAME}", 'process', f"Not found {h5_file_path.name} in {parent_dir}")
+                input_data_path = model_dir / 'input_data.txt'
+                with open(input_data_path, 'w') as input_data_file:
+                    json.dump(input_data, input_data_file, indent=4)
+                print(f"INFO: {self.FILE_NAME}", 'process', f"Saved input_data in {input_data_path}")
                     
         return input_data

@@ -37,6 +37,7 @@ processors:
     epochs: 300
     width_height: 'pad_image_to_average_dimensions' #, '', 's'
     num_classes: 3
+    fine_tune: true
   
   EvaluationMetricsProcessor:
     tooth: true
